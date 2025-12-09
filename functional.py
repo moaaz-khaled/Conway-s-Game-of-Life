@@ -1,99 +1,136 @@
 import random
+import os
+import time
 
-def generateGrid(rows, columns, seed = None):
-    RNG = random.Random(seed)
-    return [[RNG.randint(0, 1) for column in range(columns)] for row in range(rows)]
+def sum_tail(list):
+    def helper(remaining_elements, acc):
+        if not remaining_elements:
+            return acc
+        return helper(remaining_elements[1:], acc + remaining_elements[0])
+    return helper(list, 0)
 
-def count_alive_neighbors(grid, row, column):
-    rows = len(grid)
-    columns = len(grid[0])
-    directions = [(dr, dc) for dr in [-1 , 0 , 1] for dc in [-1 , 0 , 1] if not (dr == 0 and dc == 0)]
-    return sum (
-        grid[row + dr][column + dc]
-        for dr, dc in directions 
-            if 0 <= (row + dr) < rows and 0 <= (column + dc) < columns
+
+def render_row_tail(row):
+    def helper(remaining_cells, acc):
+        if not remaining_cells:
+            return acc
+        sep = " " if len(remaining_cells) > 1 else ""
+        return helper(remaining_cells[1:], acc + str(remaining_cells[0]) + sep)
+    
+    return helper(row, "")
+
+
+def render_grid(grid):
+    def helper(remaining_rows, acc):
+        if not remaining_rows:
+            return acc
+        rendered = render_row_tail(remaining_rows[0])
+        sep = "\n" if len(remaining_rows) > 1 else ""
+        return helper(remaining_rows[1:], acc + rendered + sep)
+
+    return helper(grid, "")
+
+
+def generate_grid(rows, cols, rng):
+    return tuple(tuple(rng.randint(0, 1) for _ in range(cols)) for _ in range(rows))
+
+
+def count_neighbors(grid, r, c):
+    deltas = (
+        (-1, -1), (-1, 0), (-1, 1),
+        (0, -1),          (0, 1),
+        (1, -1), (1, 0),  (1, 1)
     )
+    rows, cols = len(grid), len(grid[0])
 
-def apply_cell_rule(current_cell, neighbors):
-    return int((current_cell == 1 and neighbors in (2, 3)) or (not current_cell and neighbors == 3))
+    def helper(remaining_deltas, acc):
+        if not remaining_deltas:
+            return acc
+        dr, dc = remaining_deltas[0]
+        if 0 <= r + dr < rows and 0 <= c + dc < cols:
+            return helper(remaining_deltas[1:], acc + grid[r + dr][c + dc])
+        return helper(remaining_deltas[1:], acc)
 
-def getNextGeneration(grid):
-    rows = len(grid)
-    columns = len(grid[0])
-    return  [
-                [apply_cell_rule( grid[i][j] , count_alive_neighbors(grid , i , j) ) 
-                    for j in range(columns)]
-                for i in range(rows) 
-            ]
-
-def countDeadCells(grid):
-    return sum(cell == 0 for row in grid for cell in row)
+    return helper(deltas, 0)
 
 
-def grids_are_equal(grid1, grid2):
-    return all(cell1 == cell2 for row1, row2 in zip(grid1, grid2) for cell1, cell2 in zip(row1, row2))
-
-def should_Terminate(grid , previous_grid):
-    total_cells = len(grid) * len(grid[0])
-    dead_count = countDeadCells(grid)
-
-    if dead_count == total_cells:
-        return True, "all_dead"
-    elif grids_are_equal(grid, previous_grid):
-        return True, "steady_state"
-    else:
-        return False, None
-
-def printGrid(grid):
-    [print(" ".join(str(cell) for cell in row)) for row in grid]
-
-def getUserInput():
-    while True:
-        try:
-            rows = int(input("Enter the number of rows: "))
-            columns = int(input("Enter the number of columns: "))
-            return rows, columns
-        except ValueError:
-            print("Please enter valid integers.")
-
-def ask_Continue():
-    choice = input("\nDo you want to apply the rules again? (y / any): ")
-    if choice.lower() == 'y':
-        return True
-    return False
+def apply_rule(cell, neighbors):
+    if cell == 1:
+        return 1 if neighbors in (2, 3) else 0
+    return 1 if neighbors == 3 else 0
 
 
-def simulate_generations(current_grid, previous_grid):
-    next_grid = getNextGeneration(current_grid)
-    
-    print("\nGrid after applying rules:")
-    printGrid(next_grid)
-    
-    should_stop, reason = should_Terminate(next_grid, current_grid)
-    
-    if should_stop:
-        if reason == "all_dead":
-            print("All cells are dead. Ending simulation.")
-        elif reason == "steady_state":
-            print("Grid didn't change. Ending simulation. (steady state)")
-        return next_grid
-    
-    if not ask_Continue():
-        print("Simulation ended by user.")
-        return next_grid
-    
-    return simulate_generations(next_grid, current_grid)
+def next_generation(grid):
+    rows, cols = len(grid), len(grid[0])
+
+    def process_row(r, c, acc_row):
+        if c == cols:
+            return tuple(acc_row)
+        new_cell = apply_rule(grid[r][c], count_neighbors(grid, r, c))
+        return process_row(r, c + 1, acc_row + (new_cell,))
+
+    def process_grid(r, acc_grid):
+        if r == rows:
+            return tuple(acc_grid)
+        row_tuple = process_row(r, 0, ())
+        return process_grid(r + 1, acc_grid + (row_tuple,))
+
+    return process_grid(0, ())
+
+
+def is_extinct(grid):
+    def helper(remaining_rows, acc):
+        if not remaining_rows:
+            return acc == 0
+        return helper(remaining_rows[1:], acc + sum_tail(remaining_rows[0]))
+
+    return helper(grid, 0)
+
+
+def is_stable(current, previous):
+    return current == previous
+
+
+def evolve(initial):
+    def loop(curr, prev, gen):
+        yield curr, prev, gen
+        new_grid = next_generation(curr)
+        yield from loop(new_grid, curr, gen + 1)
+
+    yield from loop(initial, None, 0)
+
+
+def get_user_confirmation():
+    choice = input("Continue? (y/n): ").lower().strip()
+    return choice == "y"
 
 
 def main():
-    rows, columns = getUserInput()
-    
-    InitialGrid = generateGrid(rows, columns)
-    
-    print("\nInitial Grid:")
-    printGrid(InitialGrid)
-    
-    final_grid = simulate_generations(InitialGrid, InitialGrid)
+    rows = int(input("Rows: "))
+    cols = int(input("Cols: "))
+    rng = random.Random()
+
+    initial = generate_grid(rows, cols, rng)
+
+    simulation = evolve(initial)
+
+    for grid, prev, gen in simulation:
+        print(f"Generation {gen}:")
+        print(render_grid(grid))
+        print("-" * 20)
+        time.sleep(0.5)
+
+        if is_extinct(grid):
+            print("Simulation stopped: all cells are dead.")
+            break
+
+        if prev and is_stable(grid, prev):
+            print("Simulation stopped: steady state reached.")
+            break
+
+        if not get_user_confirmation():
+            print("Stopped by user.")
+            break
 
 if __name__ == "__main__":
     main()
