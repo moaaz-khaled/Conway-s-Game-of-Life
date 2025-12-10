@@ -1,6 +1,4 @@
 import random
-import os
-import time
 
 def sum_tail(list):
     def helper(remaining_elements, acc):
@@ -32,7 +30,18 @@ def render_grid(grid):
 
 
 def generate_grid(rows, cols, rng):
-    return tuple(tuple(rng.randint(0, 1) for _ in range(cols)) for _ in range(rows))
+    def generate_row(remaining_cols, acc):
+        if remaining_cols == 0:
+            return tuple(acc)
+        return generate_row(remaining_cols - 1, acc + (rng.randint(0, 1),))
+    
+    def generate_rows(remaining_rows, acc):
+        if remaining_rows == 0:
+            return tuple(acc)
+        row = generate_row(cols, ())
+        return generate_rows(remaining_rows - 1, acc + (row,))
+    
+    return generate_rows(rows, ())
 
 
 def count_neighbors(grid, r, c):
@@ -54,28 +63,57 @@ def count_neighbors(grid, r, c):
     return helper(deltas, 0)
 
 
-def apply_rule(cell, neighbors):
-    if cell == 1:
-        return 1 if neighbors in (2, 3) else 0
-    return 1 if neighbors == 3 else 0
+# def make_rule(rule_func): 
+#     return lambda cell, neighbors: rule_func(cell, neighbors) 
+
+# rule = make_rule(lambda cell, n: 1 if (cell == 1 and n in (2,3)) or (cell == 0 and n == 3) else 0)
 
 
-def next_generation(grid):
-    rows, cols = len(grid), len(grid[0])
+def make_rule(rule_func):
+    def wrapper(cell, neighbors):
+        return rule_func(cell, neighbors)
+    return wrapper
 
-    def process_row(r, c, acc_row):
-        if c == cols:
-            return tuple(acc_row)
-        new_cell = apply_rule(grid[r][c], count_neighbors(grid, r, c))
-        return process_row(r, c + 1, acc_row + (new_cell,))
+def my_rule(cell, n):
+    if cell == 1 and n in (2,3):
+        return 1
+    elif cell == 0 and n == 3:
+        return 1
+    else:
+        return 0
 
-    def process_grid(r, acc_grid):
-        if r == rows:
-            return tuple(acc_grid)
-        row_tuple = process_row(r, 0, ())
-        return process_grid(r + 1, acc_grid + (row_tuple,))
+rule = make_rule(my_rule)
 
-    return process_grid(0, ())
+
+def make_grid_mapper(cell_func):
+    def mapper(grid):
+        rows, cols = len(grid), len(grid[0])
+
+        def process_row(r, c, acc_row):
+            if c == cols:
+                return tuple(acc_row)
+            new_cell = cell_func(r, c, grid)
+            return process_row(r, c + 1, acc_row + (new_cell,))
+
+        def process_grid(r, acc_grid):
+            if r == rows:
+                return tuple(acc_grid)
+            row_tuple = process_row(r, 0, ())
+            return process_grid(r + 1, acc_grid + (row_tuple,))
+
+        return process_grid(0, ())
+    
+    return mapper
+
+
+# next_generation = make_grid_mapper(
+#     lambda r, c, grid: rule(grid[r][c], count_neighbors(grid, r, c))
+# )
+
+def cell_rule(r, c, grid):
+    return rule(grid[r][c], count_neighbors(grid, r, c))
+
+next_generation = make_grid_mapper(cell_rule)
 
 
 def is_extinct(grid):
@@ -91,34 +129,36 @@ def is_stable(current, previous):
     return current == previous
 
 
-def evolve(initial):
-    def loop(curr, prev, gen):
-        yield curr, prev, gen
-        new_grid = next_generation(curr)
-        yield from loop(new_grid, curr, gen + 1)
-
-    yield from loop(initial, None, 0)
-
-
-def get_user_confirmation():
-    choice = input("Continue? (y/n): ").lower().strip()
-    return choice == "y"
+def evolve(initial, next_gen, is_stable_func):
+    def loop(curr, prev, gen, acc):
+        new_grid = next_gen(curr)
+        new_acc = acc + [(curr, prev, gen)]
+        
+        if prev and is_stable_func(new_grid, curr):
+            return new_acc + [(new_grid, curr, gen + 1)]
+        return loop(new_grid, curr, gen + 1, new_acc)
+    
+    return loop(initial, None, 0, [])
 
 
 def main():
-    rows = int(input("Rows: "))
-    cols = int(input("Cols: "))
+    while True:
+        try:
+            rows = int(input("Enter the number of rows: "))
+            cols = int(input("Enter the number of columns: "))
+            break
+        except ValueError:
+            print("Please enter valid integers.")
     rng = random.Random()
 
     initial = generate_grid(rows, cols, rng)
 
-    simulation = evolve(initial)
+    simulation = evolve(initial, next_generation, is_stable)
 
     for grid, prev, gen in simulation:
         print(f"Generation {gen}:")
         print(render_grid(grid))
         print("-" * 20)
-        time.sleep(0.5)
 
         if is_extinct(grid):
             print("Simulation stopped: all cells are dead.")
@@ -128,9 +168,11 @@ def main():
             print("Simulation stopped: steady state reached.")
             break
 
-        if not get_user_confirmation():
+        choice = input("Continue? (y/n): ").lower().strip()
+        if choice != "y":
             print("Stopped by user.")
             break
+
 
 if __name__ == "__main__":
     main()
